@@ -6,6 +6,7 @@ import {
   resolveChannelMatchConfig,
   type ChannelMatchSource,
 } from "../../channels/channel-config.js";
+import type { DiscordThreadConfig } from "../../config/zod-schema.providers-core.js";
 import { formatDiscordUserTag } from "./format.js";
 
 export type DiscordAllowList = {
@@ -35,8 +36,10 @@ export type DiscordGuildEntryResolved = {
       systemPrompt?: string;
       includeThreadStarter?: boolean;
       autoThread?: boolean;
+      thread?: DiscordThreadConfig;
     }
   >;
+  threadDefaults?: DiscordThreadConfig;
 };
 
 export type DiscordChannelConfigResolved = {
@@ -51,6 +54,7 @@ export type DiscordChannelConfigResolved = {
   autoThread?: boolean;
   matchKey?: string;
   matchSource?: ChannelMatchSource;
+  thread?: DiscordThreadConfig;
 };
 
 export function normalizeDiscordAllowList(raw: string[] | undefined, prefixes: string[]) {
@@ -346,6 +350,7 @@ function resolveDiscordChannelConfigEntry(
     systemPrompt: entry.systemPrompt,
     includeThreadStarter: entry.includeThreadStarter,
     autoThread: entry.autoThread,
+    thread: entry.thread,
   };
   return resolved;
 }

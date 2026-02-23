@@ -12,6 +12,7 @@ import type { ChannelHeartbeatVisibilityConfig } from "./types.channels.js";
 import type { DmConfig, ProviderCommandsConfig } from "./types.messages.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 import type { TtsConfig } from "./types.tts.js";
+import type { DiscordThreadConfig } from "./zod-schema.providers-core.js";
 
 export type DiscordStreamMode = "off" | "partial" | "block" | "progress";
 
@@ -281,6 +282,8 @@ export type DiscordAccountConfig = {
   activityType?: 0 | 1 | 2 | 3 | 4 | 5;
   /** Streaming URL (Twitch/YouTube). Required when activityType=1. */
   activityUrl?: string;
+  /** Default thread isolation settings for all guilds/channels in this account. */
+  threadDefaults?: DiscordThreadConfig;
 };
 
 export type DiscordConfig = {

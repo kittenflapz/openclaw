@@ -1,4 +1,6 @@
 import { ChannelType } from "@buape/carbon";
+import type { Client } from "@buape/carbon";
+import { Routes, type APIMessage } from "discord-api-types/v10";
 import { resolveAckReaction, resolveHumanDelayConfig } from "../../agents/identity.js";
 import { EmbeddedBlockChunker } from "../../agents/pi-embedded-block-chunker.js";
 import { resolveChunkMode } from "../../auto-reply/chunk.js";
@@ -53,6 +55,88 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+import type { DiscordThreadConfig } from "../../config/zod-schema.providers-core.js";
+
+interface ResolvedDiscordThreadConfig {
+  isolate: boolean;
+  inheritMessages: number;
+}
+
+/**
+ * Resolve merged thread configuration from channel → guild → account defaults.
+ * Priority: channel > guild > account > built-in defaults.
+ */
+function resolveDiscordThreadConfig(params: {
+  channelConfig?: { thread?: DiscordThreadConfig };
+  guildConfig?: { threadDefaults?: DiscordThreadConfig };
+  accountConfig?: { threadDefaults?: DiscordThreadConfig };
+}): ResolvedDiscordThreadConfig {
+  const channelThread = params.channelConfig?.thread;
+  const guildThread = params.guildConfig?.threadDefaults;
+  const accountThread = params.accountConfig?.threadDefaults;
+
+  return {
+    isolate:
+      channelThread?.isolate ?? guildThread?.isolate ?? accountThread?.isolate ?? true,
+    inheritMessages:
+      channelThread?.inheritMessages ??
+      guildThread?.inheritMessages ??
+      accountThread?.inheritMessages ??
+      0,
+  };
+}
+
+interface InheritedMessage {
+  author: string;
+  content: string;
+  timestamp: number;
+}
+
+/**
+ * Fetch recent messages from a parent channel for thread context inheritance.
+ * Returns messages in chronological order (oldest first).
+ */
+async function fetchParentChannelMessages(params: {
+  client: Client;
+  channelId: string;
+  limit: number;
+}): Promise<InheritedMessage[]> {
+  if (params.limit <= 0) return [];
+  try {
+    const messages = (await params.client.rest.get(
+      Routes.channelMessages(params.channelId),
+      { query: new URLSearchParams({ limit: String(Math.min(params.limit, 20)) }) },
+    )) as APIMessage[];
+
+    return messages
+      .filter((m) => m.content?.trim())
+      .map((m) => ({
+        author: m.author?.username ?? "Unknown",
+        content: m.content ?? "",
+        timestamp: new Date(m.timestamp).getTime(),
+      }))
+      .reverse(); // Chronological order (oldest first)
+  } catch (err) {
+    logVerbose(`discord: failed to fetch parent messages: ${String(err)}`);
+    return [];
+  }
+}
+
+/**
+ * Format inherited parent messages as context block for thread.
+ */
+function formatInheritedContext(params: {
+  messages: InheritedMessage[];
+  parentName: string;
+}): string {
+  if (params.messages.length === 0) return "";
+  const lines = params.messages.map((m) => {
+    const time = new Date(m.timestamp).toISOString().slice(11, 16); // HH:MM
+    return `  ${time} ${m.author}: ${m.content}`;
+  });
+  return `[Context from #${params.parentName} — last ${params.messages.length} messages]\n${lines.join("\n")}`;
 }
 
 export async function processDiscordMessage(ctx: DiscordMessagePreflightContext) {
@@ -274,12 +358,44 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
     }
   }
   const mediaPayload = buildDiscordMediaPayload(mediaList);
+
+  // Resolve thread isolation config (channel > guild > account > default)
+  const threadConfig = resolveDiscordThreadConfig({
+    channelConfig,
+    guildConfig: guildInfo ?? undefined,
+    accountConfig: discordConfig,
+  });
+
   const threadKeys = resolveThreadSessionKeys({
     baseSessionKey,
     threadId: threadChannel ? messageChannelId : undefined,
     parentSessionKey,
-    useSuffix: false,
+    useSuffix: threadConfig.isolate && Boolean(threadChannel),
   });
+
+  // Inherit parent channel messages for new isolated threads
+  // Only fetch if: in isolated thread + inheritMessages > 0 + have parent channel
+  if (
+    threadChannel &&
+    threadConfig.isolate &&
+    threadConfig.inheritMessages > 0 &&
+    threadParentId
+  ) {
+    const inheritedMessages = await fetchParentChannelMessages({
+      client,
+      channelId: threadParentId,
+      limit: threadConfig.inheritMessages,
+    });
+    if (inheritedMessages.length > 0) {
+      const inheritedContext = formatInheritedContext({
+        messages: inheritedMessages,
+        parentName: threadParentName ?? "parent",
+      });
+      // Prepend inherited context to the message body
+      combinedBody = `${inheritedContext}\n\n${combinedBody}`;
+    }
+  }
+
   const replyPlan = await resolveDiscordAutoThreadReplyPlan({
     client,
     message,

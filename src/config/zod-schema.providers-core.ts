@@ -263,6 +263,22 @@ export const DiscordDmSchema = z
   })
   .strict();
 
+/**
+ * Discord thread session isolation config.
+ * Controls whether threads get their own isolated session and how they inherit context.
+ */
+export const DiscordThreadSchema = z
+  .object({
+    /** Enable thread session isolation (default: true). Each thread gets its own session key. */
+    isolate: z.boolean().optional(),
+    /** Number of parent channel messages to seed new threads with (0-20, default: 0). */
+    inheritMessages: z.number().int().min(0).max(20).optional(),
+  })
+  .strict();
+
+/** Inferred type for Discord thread config. Use this instead of duplicating the shape. */
+export type DiscordThreadConfig = z.infer<typeof DiscordThreadSchema>;
+
 export const DiscordGuildChannelSchema = z
   .object({
     allow: z.boolean().optional(),
@@ -276,6 +292,8 @@ export const DiscordGuildChannelSchema = z
     systemPrompt: z.string().optional(),
     includeThreadStarter: z.boolean().optional(),
     autoThread: z.boolean().optional(),
+    /** Thread isolation settings for this channel. */
+    thread: DiscordThreadSchema.optional(),
   })
   .strict();
 
@@ -289,6 +307,8 @@ export const DiscordGuildSchema = z
     users: DiscordIdListSchema.optional(),
     roles: DiscordIdListSchema.optional(),
     channels: z.record(z.string(), DiscordGuildChannelSchema.optional()).optional(),
+    /** Default thread isolation settings for all channels in this guild. */
+    threadDefaults: DiscordThreadSchema.optional(),
   })
   .strict();
 
@@ -405,6 +425,8 @@ export const DiscordAccountSchema = z
       })
       .strict()
       .optional(),
+    /** Default thread isolation settings for all guilds/channels. */
+    threadDefaults: DiscordThreadSchema.optional(),
     intents: z
       .object({
         presence: z.boolean().optional(),

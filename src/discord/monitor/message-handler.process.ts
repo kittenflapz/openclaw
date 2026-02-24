@@ -412,6 +412,20 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
   const replyReference = replyPlan.replyReference;
   const autoThreadContext = replyPlan.autoThreadContext;
 
+  // When thread isolation is enabled, override session keys to ensure true isolation:
+  // 1. Use the :thread: suffix format for consistent isolated session keys
+  // 2. Drop ParentSessionKey to prevent parent context inheritance/compaction
+  // This handles both cases:
+  //   - autoThread-created threads (threadChannel is null, autoThreadContext exists)
+  //   - existing threads (threadChannel exists, threadKeys already has the suffix)
+  let isolatedSessionKey: string | undefined;
+  if (threadConfig.isolate) {
+    const isolatedThreadId = threadChannel?.id ?? autoThreadContext?.createdThreadId;
+    if (isolatedThreadId) {
+      isolatedSessionKey = `${baseSessionKey}:thread:${isolatedThreadId.toLowerCase()}`;
+    }
+  }
+
   const effectiveFrom = isDirectMessage
     ? `discord:${author.id}`
     : (autoThreadContext?.From ?? `discord:channel:${messageChannelId}`);
@@ -440,7 +454,11 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
     CommandBody: baseText,
     From: effectiveFrom,
     To: effectiveTo,
-    SessionKey: boundSessionKey ?? autoThreadContext?.SessionKey ?? threadKeys.sessionKey,
+    SessionKey:
+      boundSessionKey ??
+      isolatedSessionKey ??
+      autoThreadContext?.SessionKey ??
+      threadKeys.sessionKey,
     AccountId: route.accountId,
     ChatType: isDirectMessage ? "direct" : "channel",
     ConversationLabel: fromLabel,
@@ -461,7 +479,9 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
     ReplyToId: replyContext?.id,
     ReplyToBody: replyContext?.body,
     ReplyToSender: replyContext?.sender,
-    ParentSessionKey: autoThreadContext?.ParentSessionKey ?? threadKeys.parentSessionKey,
+    ParentSessionKey: isolatedSessionKey
+      ? undefined
+      : (autoThreadContext?.ParentSessionKey ?? threadKeys.parentSessionKey),
     MessageThreadId: threadChannel?.id ?? autoThreadContext?.createdThreadId ?? undefined,
     ThreadStarterBody: threadStarterBody,
     ThreadLabel: threadLabel,
